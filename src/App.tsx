@@ -782,6 +782,7 @@ function ReviewSection() {
   const [newComment, setNewComment] = useState('');
   const [rating, setRating] = useState(5);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
@@ -806,10 +807,12 @@ function ReviewSection() {
   }, []);
 
   const handleLogin = async () => {
+    setLoginError(null);
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login failed:", error);
+      setLoginError(error.message || "An unknown error occurred during sign-in.");
     }
   };
 
@@ -907,6 +910,11 @@ function ReviewSection() {
               <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" className="w-5 h-5" />
               Continue with Google
             </button>
+            {loginError && (
+              <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs max-w-sm mx-auto">
+                {loginError}
+              </div>
+            )}
           </div>
         )}
       </div>
