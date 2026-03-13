@@ -415,10 +415,19 @@ function PreviewModal({
 
   const handleExtractText = async () => {
     if (!canvasRef.current) return;
+    
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.error("GEMINI_API_KEY is missing. Please configure it in your environment variables.");
+      setAiText("Error: Gemini API key is not configured. If you are the developer, please add GEMINI_API_KEY to your environment variables.");
+      setShowAIPanel(true);
+      return;
+    }
+
     setAiLoading(true);
     setShowAIPanel(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = new GoogleGenAI({ apiKey });
       const base64Image = canvasRef.current.toDataURL('image/jpeg', 0.95);
       const base64Data = base64Image.split(',')[1];
       
@@ -439,10 +448,16 @@ function PreviewModal({
         },
       });
       
-      setAiText(response.text || '');
-    } catch (error) {
+      setAiText(response.text || 'No text could be extracted.');
+    } catch (error: any) {
       console.error("Error extracting text:", error);
-      setAiText("Failed to extract text. Please try again.");
+      let errorMessage = "Failed to extract text. Please try again.";
+      if (error.message?.includes('API_KEY_INVALID')) {
+        errorMessage = "Invalid API Key. Please check your configuration.";
+      } else if (error.message?.includes('quota')) {
+        errorMessage = "API quota exceeded. Please try again later.";
+      }
+      setAiText(errorMessage);
     } finally {
       setAiLoading(false);
     }
