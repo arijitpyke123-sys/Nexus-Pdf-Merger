@@ -23,10 +23,31 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { Document, Packer, Paragraph, ImageRun } from 'docx';
 import * as fabric from 'fabric';
 import { GoogleGenAI } from '@google/genai';
-import { UploadCloud, FileDown, Trash2, GripVertical, FilePlus2, Loader2, Layers, X, Eye, ArrowDown, Zap, ChevronRight, RotateCw, FileText, MousePointer2, Pen, Type, Eraser, Undo2, Redo2, Sparkles } from 'lucide-react';
+import Markdown from 'react-markdown';
+import { UploadCloud, FileDown, Trash2, GripVertical, FilePlus2, Loader2, Layers, X, Eye, ArrowDown, Zap, ChevronRight, RotateCw, FileText, MousePointer2, Pen, Type, Eraser, Undo2, Redo2, Sparkles, MessageSquareText } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'motion/react';
+import { 
+  auth, 
+  db, 
+  googleProvider, 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  collection, 
+  addDoc, 
+  query, 
+  orderBy, 
+  onSnapshot, 
+  serverTimestamp, 
+  handleFirestoreError, 
+  OperationType,
+  deleteDoc,
+  doc,
+  User,
+  Timestamp
+} from './firebase';
 
 // Configure PDF.js worker using Vite's URL import
 // @ts-ignore
@@ -442,13 +463,13 @@ function PreviewModal({
               },
             },
             {
-              text: 'Extract all text from this page. If there are visuals, briefly describe them. Return the result as clean text/markdown.',
+              text: 'Provide a concise summary of this page. If there are visuals, describe their significance. Return the result as clean markdown.',
             },
           ],
         },
       });
       
-      setAiText(response.text || 'No text could be extracted.');
+      setAiText(response.text || 'No summary could be generated.');
     } catch (error: any) {
       console.error("Error extracting text:", error);
       let errorMessage = "Failed to extract text. Please try again.";
@@ -580,7 +601,7 @@ function PreviewModal({
                 }
               }}
               className={cn("p-1.5 rounded-lg transition-colors flex items-center gap-1.5", showAIPanel ? "bg-[#ff6d5a]/20 text-[#ff6d5a]" : "hover:bg-[#ff6d5a]/10 text-white/60 hover:text-[#ff6d5a]")}
-              title="AI Extract Text & Visuals"
+              title="AI Page Summary"
             >
               <Sparkles className="w-5 h-5" />
             </button>
@@ -644,7 +665,7 @@ function PreviewModal({
                 <div className="p-4 border-b border-white/10 flex items-center justify-between">
                   <h4 className="text-white font-medium flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-[#ff6d5a]" />
-                    AI Extraction
+                    AI Page Summary
                   </h4>
                   <button 
                     onClick={() => setShowAIPanel(false)}
@@ -657,19 +678,16 @@ function PreviewModal({
                   {aiLoading ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-white/60 gap-3">
                       <Loader2 className="w-6 h-6 animate-spin text-[#ff6d5a]" />
-                      <p className="text-sm">Analyzing page content...</p>
+                      <p className="text-sm">Summarizing page...</p>
                     </div>
                   ) : (
-                    <div className="flex-1 flex flex-col gap-2">
+                    <div className="flex-1 flex flex-col gap-2 overflow-hidden">
                       <p className="text-xs text-white/60">
-                        Extracted text and visual descriptions. You can edit this content directly.
+                        AI-generated summary of this page.
                       </p>
-                      <textarea
-                        value={aiText}
-                        onChange={(e) => setAiText(e.target.value)}
-                        className="flex-1 bg-white/5 border border-white/10 rounded-lg p-3 text-sm text-white/90 resize-none focus:outline-none focus:ring-1 focus:ring-[#ff6d5a] font-mono"
-                        placeholder="Extracted content will appear here..."
-                      />
+                      <div className="flex-1 bg-white/5 border border-white/10 rounded-lg p-3 text-sm text-white/90 overflow-y-auto markdown-body">
+                        <Markdown>{aiText}</Markdown>
+                      </div>
                     </div>
                   )}
                   {!aiLoading && (
@@ -690,6 +708,264 @@ function PreviewModal({
   );
 }
 
+function SummaryModal({
+  summary,
+  onClose,
+  onRegenerate,
+  loading,
+}: {
+  summary: string;
+  onClose: () => void;
+  onRegenerate: () => void;
+  loading: boolean;
+}) {
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[200] bg-[#0f111a]/90 backdrop-blur-md flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <motion.div 
+        initial={{ scale: 0.95, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.95, opacity: 0, y: 20 }}
+        transition={{ type: "spring", damping: 25, stiffness: 300 }}
+        className="bg-[#1e2128] border border-white/10 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="p-4 border-b border-white/10 bg-[#15171c] flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-[#ff6d5a]" />
+            Document Summary
+          </h3>
+          <button onClick={onClose} className="text-white/60 hover:text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-6 markdown-body text-white/90">
+          {loading ? (
+            <div className="h-full flex flex-col items-center justify-center gap-4 py-12">
+              <Loader2 className="w-10 h-10 text-[#ff6d5a] animate-spin" />
+              <p className="text-white/60">Analyzing entire document and generating summary...</p>
+            </div>
+          ) : (
+            <Markdown>{summary || "No summary available."}</Markdown>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-white/10 bg-[#15171c] flex justify-end gap-3">
+          <button 
+            onClick={onRegenerate}
+            disabled={loading}
+            className="px-4 py-2 text-sm font-medium bg-white/5 hover:bg-white/10 text-white rounded-lg transition-colors border border-white/10 disabled:opacity-50"
+          >
+            Regenerate
+          </button>
+          <button 
+            onClick={onClose}
+            className="px-6 py-2 text-sm font-medium bg-[#ff6d5a] hover:bg-[#ff5a45] text-white rounded-lg transition-colors"
+          >
+            Done
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function ReviewSection() {
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [user, setUser] = useState<User | null>(null);
+  const [newComment, setNewComment] = useState('');
+  const [rating, setRating] = useState(5);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+
+    const q = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'));
+    const unsubscribeSnap = onSnapshot(q, (snapshot) => {
+      const reviewsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setReviews(reviewsData);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'reviews');
+    });
+
+    return () => {
+      unsubscribeAuth();
+      unsubscribeSnap();
+    };
+  }, []);
+
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error("Login failed:", error);
+    }
+  };
+
+  const handleLogout = () => signOut(auth);
+
+  const handleSubmitReview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !newComment.trim()) return;
+
+    setIsSubmitting(true);
+    try {
+      await addDoc(collection(db, 'reviews'), {
+        uid: user.uid,
+        userName: user.displayName || 'Anonymous',
+        userPhoto: user.photoURL || '',
+        rating,
+        comment: newComment.trim(),
+        createdAt: serverTimestamp(),
+      });
+      setNewComment('');
+      setRating(5);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'reviews');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteReview = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'reviews', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `reviews/${id}`);
+    }
+  };
+
+  return (
+    <section className="w-full max-w-4xl mx-auto py-20 px-6 border-t border-white/10">
+      <div className="text-center mb-12">
+        <h2 className="text-3xl font-bold mb-4">User Reviews</h2>
+        <p className="text-white/60">Share your experience with Nexus PDF</p>
+      </div>
+
+      {/* Review Form */}
+      <div className="bg-[#1e2128] rounded-2xl border border-white/10 p-6 mb-12 shadow-xl">
+        {user ? (
+          <form onSubmit={handleSubmitReview} className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <img src={user.photoURL || ''} alt="" className="w-10 h-10 rounded-full border border-white/10" referrerPolicy="no-referrer" />
+                <div>
+                  <div className="text-sm font-medium text-white">{user.displayName}</div>
+                  <button type="button" onClick={handleLogout} className="text-[10px] text-white/40 hover:text-white transition-colors">Sign Out</button>
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => setRating(star)}
+                    className={cn("p-1 transition-colors", rating >= star ? "text-yellow-400" : "text-white/20")}
+                  >
+                    <Sparkles className="w-5 h-5 fill-current" />
+                  </button>
+                ))}
+              </div>
+            </div>
+            <textarea
+              value={newComment}
+              onChange={(e) => setNewComment(e.target.value)}
+              placeholder="Write your review here..."
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-white/90 focus:outline-none focus:ring-1 focus:ring-[#ff6d5a] min-h-[100px] resize-none"
+              maxLength={1000}
+              required
+            />
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={isSubmitting || !newComment.trim()}
+                className="px-6 py-2 bg-[#ff6d5a] hover:bg-[#ff5a45] text-white rounded-lg text-sm font-medium transition-all disabled:opacity-50 flex items-center gap-2"
+              >
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquareText className="w-4 h-4" />}
+                Post Review
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="text-center py-8">
+            <p className="text-white/60 mb-6">Sign in with Google to leave a review</p>
+            <button
+              onClick={handleLogin}
+              className="px-8 py-3 bg-white text-black rounded-xl font-medium hover:bg-white/90 transition-all flex items-center gap-3 mx-auto"
+            >
+              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" className="w-5 h-5" />
+              Continue with Google
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Reviews List */}
+      <div className="space-y-6">
+        <AnimatePresence mode="popLayout">
+          {reviews.map((review) => (
+            <motion.div
+              key={review.id}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-[#15171c] rounded-xl border border-white/5 p-6 relative group"
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <img src={review.userPhoto} alt="" className="w-10 h-10 rounded-full border border-white/10" referrerPolicy="no-referrer" />
+                  <div>
+                    <div className="text-sm font-medium text-white">{review.userName}</div>
+                    <div className="text-[10px] text-white/40">
+                      {review.createdAt instanceof Timestamp ? review.createdAt.toDate().toLocaleDateString() : 'Just now'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-0.5">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <Sparkles
+                      key={star}
+                      className={cn("w-3.5 h-3.5 fill-current", review.rating >= star ? "text-yellow-400" : "text-white/10")}
+                    />
+                  ))}
+                </div>
+              </div>
+              <p className="text-sm text-white/70 leading-relaxed italic">"{review.comment}"</p>
+              
+              {user && user.uid === review.uid && (
+                <button
+                  onClick={() => handleDeleteReview(review.id)}
+                  className="absolute top-4 right-4 p-2 text-white/20 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                  title="Delete Review"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+        
+        {reviews.length === 0 && (
+          <div className="text-center py-12 text-white/20 italic">
+            No reviews yet. Be the first to share your thoughts!
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 // --- Main App ---
 
 export default function App() {
@@ -700,6 +976,9 @@ export default function App() {
   const [addPageNumbers, setAddPageNumbers] = useState(false);
   const [previewPage, setPreviewPage] = useState<PageMeta | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [docSummary, setDocSummary] = useState<string | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1098,6 +1377,60 @@ export default function App() {
     }
   };
 
+  const handleSummarizeDocument = async () => {
+    if (pages.length === 0) return;
+    
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      setAlertMessage("Gemini API key is not configured. Please add GEMINI_API_KEY to your environment variables.");
+      return;
+    }
+
+    setIsSummarizing(true);
+    setShowSummaryModal(true);
+    
+    try {
+      // Extract text from all pages
+      let fullText = "";
+      const neededSourceIds = new Set(pages.map(p => p.sourceFileId));
+      const loadedSourceDocs: Record<string, pdfjsLib.PDFDocumentProxy> = {};
+
+      for (const sourceId of Array.from(neededSourceIds) as string[]) {
+        const sourceFile = sourceFiles.find(f => f.id === sourceId);
+        if (sourceFile) {
+          const arrayBuffer = await sourceFile.file.arrayBuffer();
+          loadedSourceDocs[sourceId] = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        }
+      }
+
+      for (let i = 0; i < pages.length; i++) {
+        const pageMeta = pages[i];
+        const pdfDoc = loadedSourceDocs[pageMeta.sourceFileId];
+        if (pdfDoc) {
+          const page = await pdfDoc.getPage(pageMeta.originalPageIndex + 1);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items.map((item: any) => item.str).join(" ");
+          fullText += `--- Page ${i + 1} ---\n${pageText}\n\n`;
+        }
+        // Limit text to avoid token limits for very large PDFs in this demo
+        if (fullText.length > 30000) break; 
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: `Provide a comprehensive summary of the following PDF document content. Highlight key points, main themes, and any important conclusions. Use clear markdown formatting with headings and bullet points.\n\nDOCUMENT CONTENT:\n${fullText}`,
+      });
+
+      setDocSummary(response.text || "Could not generate summary.");
+    } catch (error: any) {
+      console.error("Error summarizing document:", error);
+      setDocSummary("Failed to generate document summary. " + (error.message || ""));
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
   const activePage = pages.find(p => p.id === activeId);
 
   return (
@@ -1292,6 +1625,17 @@ export default function App() {
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
+            onClick={handleSummarizeDocument}
+            disabled={pages.length === 0 || isProcessing || isSummarizing}
+            className="px-4 py-2 text-sm font-medium bg-[#ff6d5a]/10 hover:bg-[#ff6d5a]/20 text-[#ff6d5a] border border-[#ff6d5a]/30 rounded-lg transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSummarizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            Summarize PDF
+          </motion.button>
+          
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={handleExportWord}
             disabled={pages.length === 0 || isProcessing}
             className="px-4 py-2 text-sm font-medium bg-[#4b83f0] hover:bg-[#3b6bce] text-white rounded-lg transition-all shadow-lg shadow-[#4b83f0]/20 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
@@ -1427,6 +1771,18 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        {/* Summary Modal */}
+        <AnimatePresence>
+          {showSummaryModal && (
+            <SummaryModal 
+              summary={docSummary || ""} 
+              loading={isSummarizing}
+              onClose={() => setShowSummaryModal(false)}
+              onRegenerate={handleSummarizeDocument}
+            />
+          )}
+        </AnimatePresence>
+
         {/* Hidden File Input */}
         <input
           type="file"
@@ -1509,6 +1865,7 @@ export default function App() {
       </section>
 
       {/* Footer */}
+      <ReviewSection />
       <footer className="py-8 border-t border-white/10 bg-[#0f111a] text-center">
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2 text-white/50">

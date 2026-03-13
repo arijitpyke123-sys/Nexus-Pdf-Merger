@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: reviews
+    // Document ID: auto-generated
+    // Fields:
+    //   - uid: string (required, immutable) - User ID
+    //   - userName: string (required, max 100 chars) - User display name
+    //   - userPhoto: string (optional, URL) - User photo URL
+    //   - rating: number (required, 1-5) - Star rating
+    //   - comment: string (required, 1-1000 chars) - Review text
+    //   - createdAt: timestamp (required, immutable) - Creation time
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidReview(data) {
+      return data.keys().hasAll(['uid', 'userName', 'rating', 'comment', 'createdAt']) &&
+             data.uid is string &&
+             data.userName is string && data.userName.size() > 0 && data.userName.size() <= 100 &&
+             data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+             data.comment is string && data.comment.size() > 0 && data.comment.size() <= 1000 &&
+             data.createdAt is timestamp &&
+             (!('userPhoto' in data) || (data.userPhoto is string && data.userPhoto.matches("^https?://.*")));
+    }
+
+    match /reviews/{reviewId} {
+      // Anyone can read reviews
+      allow read: if true;
+      
+      // Only authenticated users can create reviews, and they must be the owner
+      allow create: if isAuthenticated() && 
+                      isValidReview(request.resource.data) && 
+                      request.resource.data.uid == request.auth.uid &&
+                      request.resource.data.createdAt == request.time;
+      
+      // Only owners can delete their reviews
+      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
+
+      // Reviews are immutable for this app version (no updates)
+      allow update: if false;
+    }
+
+    match /users/{userId} {
+      function isValidUser(data) {
+        return data.keys().hasAll(['uid', 'email', 'displayName', 'photoURL']) &&
+               data.uid == userId &&
+               data.email is string &&
+               data.displayName is string;
+      }
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId) && isValidUser(request.resource.data);
+    }
+  }
+}
