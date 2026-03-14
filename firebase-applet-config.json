@@ -1,5 +1,5 @@
 {
-  "firestoreDatabaseId": "default",
+  "firestoreDatabaseId": "(default)",
   "apiKey": "AIzaSyA__rmtz5xKeursfdLTd36VOJ2kG7EWN6w",
   "authDomain": "nexus-pdf-merger.firebaseapp.com",
   "projectId": "nexus-pdf-merger",
